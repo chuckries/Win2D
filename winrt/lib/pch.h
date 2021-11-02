@@ -81,6 +81,7 @@
 #include <microsoft.system.h>
 #else
 #include <microsoft.ui.h>
+#include <Microsoft.UI.Dispatching.h>
 #include <microsoft.UI.Xaml.Controls.h>
 #include <microsoft.ui.xaml.media.h>
 #include <microsoft.ui.xaml.media.dxinterop.h>

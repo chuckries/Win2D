@@ -16,21 +16,17 @@ using namespace ABI::Microsoft::Graphics::Canvas;
 // independent input source (via the swapChainPanel), which will create a
 // dispatcher.  We then discard the input source we created.
 //
-static ComPtr<ICoreDispatcher> CreateCoreDispatcher(ISwapChainPanel* swapChainPanel)
+static ComPtr<IDispatcherQueueController> CreateDispatcherQueueController(/*ISwapChainPanel* swapChainPanel*/)
 {
-    ComPtr<ICoreInputSourceBase> inputSource;
-    ThrowIfFailed(swapChainPanel->CreateCoreIndependentInputSource(
-        CoreInputDeviceTypes_Touch | CoreInputDeviceTypes_Pen | CoreInputDeviceTypes_Mouse,
-        &inputSource));
+    ComPtr<IDispatcherQueueControllerStatics> dispatcherQueueControllerStatics;
+    ThrowIfFailed(GetActivationFactory(
+        HStringReference(RuntimeClass_Microsoft_UI_Dispatching_DispatcherQueueController).Get(),
+        &dispatcherQueueControllerStatics));
 
-    ComPtr<ICoreDispatcher> dispatcher;
-    ThrowIfFailed(inputSource->get_Dispatcher(&dispatcher));
+    ComPtr<IDispatcherQueueController> dispatcherQueueController;
+    ThrowIfFailed(dispatcherQueueControllerStatics->CreateOnCurrentThread(&dispatcherQueueController));
 
-    ThrowIfFailed(swapChainPanel->CreateCoreIndependentInputSource(
-        CoreInputDeviceTypes_None,
-        &inputSource));
-
-    return dispatcher;
+    return dispatcherQueueController;
 }
 
 //
@@ -87,7 +83,9 @@ class GameLoopThread : public IGameLoopThread
     std::mutex m_mutex;
     std::condition_variable m_conditionVariable;
 
-    ComPtr<ICoreDispatcher> m_dispatcher;
+    //ComPtr<ICoreDispatcher> m_dispatcher;
+    ComPtr<IDispatcherQueueController> m_dispatcherQueueController;
+    ComPtr<IDispatcherQueue> m_dispatcherQueue;
     bool m_started;
     bool m_startDispatcher;
     bool m_dispatcherStarted;
@@ -126,9 +124,13 @@ public:
     ~GameLoopThread()
     {
         auto lock = GetLock();
-        
-        if (m_dispatcher)
-            As<ICoreDispatcherWithTaskPriority>(m_dispatcher)->StopProcessEvents();
+
+        if (m_dispatcherQueueController)
+        {
+            ComPtr<IAsyncAction> asyncAction;
+            m_dispatcherQueueController->ShutdownQueueAsync(&asyncAction);
+            // Do I need to do something with async action here?
+        }
 
         m_shutdownRequested = true;
         m_conditionVariable.notify_all();
@@ -149,52 +151,74 @@ public:
 
         m_startDispatcher = false;
 
+        // TODO: Fix
+        //if (m_dispatcherStarted)
+        //{
+        //    assert(m_dispatcher);
+        //    ThrowIfFailed(As<ICoreDispatcherWithTaskPriority>(m_dispatcher)->StopProcessEvents());
+        //}
+
         if (m_dispatcherStarted)
         {
-            assert(m_dispatcher);
-            ThrowIfFailed(As<ICoreDispatcherWithTaskPriority>(m_dispatcher)->StopProcessEvents());
+            assert(m_dispatcherQueue);
+
+            auto callback = Callback<AddFtmBase<IDispatcherQueueHandler>::Type>([]() {
+                ::PostQuitMessage(0);
+                return S_OK;
+                });
+
+            boolean result;
+            ThrowIfFailed(m_dispatcherQueue->TryEnqueueWithPriority(DispatcherQueuePriority_Low, callback.Get(), &result));
         }
+
 
         m_conditionVariable.notify_all();
         m_conditionVariable.wait(lock, [=] { return !m_dispatcherStarted; });
     }
 
-    virtual ComPtr<IAsyncAction> RunAsync(IDispatchedHandler* handler) override
+    virtual ComPtr<IAsyncAction> RunAsync(IDispatcherQueueHandler* handler) override
     {
         auto lock = GetLock();
 
+        auto action = Make<AnimatedControlAsyncAction>(handler);
+
         if (m_startDispatcher)
         {
-            ComPtr<IAsyncAction> action;
-            HRESULT hr = m_dispatcher->RunAsync(CoreDispatcherPriority_Low, handler, &action);
+            auto callback = Callback<AddFtmBase<IDispatcherQueueHandler>::Type>(
+                [action]() {
+                    return action->InvokeAndFireCompletion().ActionResult;
+                });
 
-            // Work around MSFT:8381339. CoreDispatcher.RunAsync can fail with E_INVALIDARG
-            // when an internal counter wraps. We can recover from this by a simple retry.
-            if (hr == E_INVALIDARG)
-            {
-                hr = m_dispatcher->RunAsync(CoreDispatcherPriority_Low, handler, &action);
-            }
+            boolean result;
+            HRESULT hr = m_dispatcherQueue->TryEnqueueWithPriority(DispatcherQueuePriority_Low, callback.Get(), &result);
+
+            //// Work around MSFT:8381339. CoreDispatcher.RunAsync can fail with E_INVALIDARG
+            //// when an internal counter wraps. We can recover from this by a simple retry.
+            //if (hr == E_INVALIDARG)
+            //{
+            //    hr = m_dispatcher->RunAsync(CoreDispatcherPriority_Low, handler, &action);
+            //}
 
             ThrowIfFailed(hr);
             return action;
         }
         else
         {
-            auto action = Make<AnimatedControlAsyncAction>(handler);
             m_pendingActions.push_back(action);
             m_conditionVariable.notify_all();
-            return action;
         }
+
+        return action;
     }
 
     virtual bool HasThreadAccess() override
     {
         auto lock = GetLock();
 
-        if (m_dispatcher)
+        if (m_dispatcherQueue)
         {
             boolean result;
-            ThrowIfFailed(m_dispatcher->get_HasThreadAccess(&result));
+            ThrowIfFailed(As<IDispatcherQueue2>(m_dispatcherQueue)->get_HasThreadAccess(&result));
 
             
             return !!result;
@@ -217,7 +241,8 @@ private:
 
         auto lock = GetLock();
 
-        m_dispatcher = CreateCoreDispatcher(swapChainPanel.Get());
+        m_dispatcherQueueController = CreateDispatcherQueueController();
+        ThrowIfFailed(m_dispatcherQueueController->get_DispatcherQueue(&m_dispatcherQueue));
         swapChainPanel.Reset(); // we only needed this to create the dispatcher
         m_conditionVariable.notify_all();
 
@@ -250,7 +275,12 @@ private:
                 m_conditionVariable.notify_all();
                 
                 lock.unlock();
-                ThrowIfFailed(m_dispatcher->ProcessEvents(CoreProcessEventsOption_ProcessUntilQuit));
+                MSG msg{};
+                while (GetMessage(&msg, NULL, 0, 0))
+                {
+                    DispatchMessage(&msg);
+                }
+                //ThrowIfFailed(m_dispatcher->ProcessEvents(CoreProcessEventsOption_ProcessUntilQuit));
                 lock.lock();
 
                 m_dispatcherStarted = false;

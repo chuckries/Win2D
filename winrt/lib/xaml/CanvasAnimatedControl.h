@@ -17,6 +17,8 @@ namespace ABI { namespace Microsoft { namespace Graphics { namespace Canvas { na
 {
     using namespace ABI::Windows::ApplicationModel;
     using namespace ABI::Windows::UI::Core;
+    using namespace ABI::Microsoft::UI::Dispatching;
+    using namespace ABI::Microsoft::UI::Input;
     using namespace ABI::Microsoft::UI::Xaml::Controls;
     using namespace ABI::Microsoft::UI::Xaml::Shapes;
     using namespace ABI::Microsoft::UI::Xaml;
@@ -233,15 +235,15 @@ namespace ABI { namespace Microsoft { namespace Graphics { namespace Canvas { na
         IFACEMETHODIMP ResetElapsedTime() override;
 
         IFACEMETHODIMP CreateCoreIndependentInputSource(
-            CoreInputDeviceTypes deviceType,
-            ICoreInputSourceBase** returnValue) override;
+            InputPointerSourceDeviceKinds deviceKinds,
+            IInputPointerSource** returnValue) override;
 
         IFACEMETHODIMP RemoveFromVisualTree() override;
 
         IFACEMETHODIMP get_HasGameLoopThreadAccess(boolean* value) override;
 
         IFACEMETHODIMP RunOnGameLoopThreadAsync(
-            IDispatchedHandler* callback,
+            IDispatcherQueueHandler* callback,
             IAsyncAction** asyncAction) override;
 
         //

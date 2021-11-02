@@ -18,7 +18,7 @@ public:
     virtual ~IGameLoopThread() = default;
     virtual void StartDispatcher() = 0;
     virtual void StopDispatcher() = 0;
-    virtual ComPtr<IAsyncAction> RunAsync(IDispatchedHandler* handler) = 0;
+    virtual ComPtr<IAsyncAction> RunAsync(IDispatcherQueueHandler* handler) = 0;
     virtual bool HasThreadAccess() = 0;
 };
 

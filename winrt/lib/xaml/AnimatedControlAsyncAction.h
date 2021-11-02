@@ -12,10 +12,10 @@ namespace ABI { namespace Microsoft { namespace Graphics { namespace Canvas { na
     {
         InspectableClass(InterfaceName_Windows_Foundation_IAsyncAction, BaseTrust);
 
-        ComPtr<IDispatchedHandler> m_dispatchedHandler;
+        ComPtr<ABI::Microsoft::UI::Dispatching::IDispatcherQueueHandler> m_dispatchedHandler;
 
     public:
-        AnimatedControlAsyncAction(IDispatchedHandler* callback)
+        AnimatedControlAsyncAction(ABI::Microsoft::UI::Dispatching::IDispatcherQueueHandler* callback)
             : m_dispatchedHandler(callback)
         {
             Start();
